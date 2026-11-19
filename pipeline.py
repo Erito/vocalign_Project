@@ -1,4 +1,8 @@
 """Fungsi analisis dari vocalign_pipeline (2).ipynb untuk uji deployment CPU."""
+# Modul ini berisi pengukuran audio dan visual yang dipanggil oleh app.py.
+# Hasil berupa tabel per waktu sehingga dapat dipakai untuk grafik dan evaluasi.
+
+# --- 0. Dependensi dan konfigurasi pengukuran ---
 import os
 import subprocess
 import time
@@ -50,8 +54,13 @@ class Config:
     BBOX_SMOOTH_FRAMES: int = 5
     MOUTH_EXPECTED_XY: tuple = (0.5, 0.72)
 
+# Konfigurasi default dipakai oleh fungsi. app.py membuat salinan dengan WORK_DIR
+# khusus untuk setiap upload melalui dataclasses.replace().
 CFG = Config()
 
+# --- 1. Persiapan video, audio, dan timestamp ---
+# FFmpeg menghasilkan audio 16 kHz untuk CREPE serta video 30 fps untuk YOLO.
+# Timestamp frame hasil normalisasi dihitung dari indeks frame dibagi FPS.
 def run_ffmpeg(args):
     """Menjalankan ffmpeg; melempar error yang jelas jika gagal."""
     cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", *args]
@@ -131,6 +140,9 @@ def iter_frames(meta):
     finally:
         cap.release()
 
+# --- 2. Pengukuran pitch dan penilaian terhadap nada acuan ---
+# f0 adalah frekuensi dasar suara dalam Hz. Voiced menandai sampel yang lolos
+# ambang confidence dan frekuensi. Sampel yang gagal memperoleh f0 dan cent NaN.
 def load_audio(meta):
     """Membaca audio hasil Tahap 1 sebagai float32 mono."""
     audio, sr = sf.read(meta["audio_path"], dtype="float32")
@@ -166,6 +178,8 @@ def mark_stable(voiced, step_ms, attack_ms):
     Frame 'stabil' = frame voiced setelah melewati attack_ms pertama tiap segmen.
     Awal nada diabaikan karena suara biasanya masih meluncur menuju nada target.
     """
+    # Label stable menjadi mask penilaian setelah awal segmen dilewati.
+    # Mask ini ditentukan dari voiced dan waktu, tanpa mengukur variasi pitch.
     stable = np.zeros_like(voiced, dtype=bool)
     skip = int(round(attack_ms / step_ms))
     for seg in _voiced_segments(voiced):
@@ -189,6 +203,7 @@ def extract_pitch_vs_target(audio, sr, target_note, cfg=CFG):
     """
     f_target = note_to_hz_safe(target_note)
 
+    # Viterbi memilih lintasan pitch yang berkesinambungan sepanjang audio.
     t, f0_raw, conf, _ = crepe.predict(
         audio, sr,
         model_capacity=cfg.CREPE_MODEL,
@@ -199,6 +214,7 @@ def extract_pitch_vs_target(audio, sr, target_note, cfg=CFG):
 
     voiced = (conf >= cfg.CONF_THRESHOLD) & (f0_raw > cfg.MIN_F0_HZ)
 
+    # Simpan f0_raw untuk inspeksi. f0 menjadi versi yang dihaluskan per segmen suara.
     f0 = f0_raw.astype(float).copy()
     if cfg.SMOOTH_VIBRATO:
         f0 = smooth_voiced_segments(f0, voiced, _odd_kernel(cfg.VIBRATO_WINDOW_MS, cfg.CREPE_STEP_MS))
@@ -212,6 +228,8 @@ def extract_pitch_vs_target(audio, sr, target_note, cfg=CFG):
     octave_shift = int(np.round(np.median(ref) / 1200.0)) if ref.size else 0
     f_ref = f_target * (2.0 ** octave_shift)
 
+    # Cent positif berarti lebih tinggi dari acuan, cent negatif berarti lebih rendah.
+    # Selisih 100 cent setara satu semitone dan 1.200 cent setara satu oktaf.
     cent = 1200.0 * np.log2(f0 / f_ref)
 
     tol, wrong = cfg.CENT_TOLERANCE, cfg.WRONG_NOTE_CENT
@@ -222,6 +240,8 @@ def extract_pitch_vs_target(audio, sr, target_note, cfg=CFG):
     status[voiced & (cent > tol) & (abs_c <= wrong)] = "sharp"
     status[voiced & (abs_c > wrong)] = "nada-salah"
 
+    # df berisi pengukuran tiap 10 ms. info mencatat target serta acuan setelah
+    # penyesuaian oktaf agar hasil selanjutnya bisa dijelaskan dengan konsisten.
     df = pd.DataFrame({
         "t": t,
         "f0_raw": f0_raw,
@@ -263,6 +283,9 @@ def evaluate_note(df, info, cfg=CFG):
         f"Dinyanyikan {abs(shift)} oktaf lebih {'rendah' if shift < 0 else 'tinggi'} "
         f"dari target (wajar, tidak dihitung fals)")
 
+    # Vonis memakai median cent, sedangkan persentase menghitung status semua
+    # sampel stable. Keduanya menggambarkan aspek penilaian yang berbeda.
+    # goyangan_cent adalah simpangan baku, sehingga selisih oktaf ikut memperbesarnya.
     return {
         "nada_target": f'{info["target_note"]} ({info["f_target_hz"]:.1f} Hz)',
         "nada_acuan": f'{info["ref_note"]} ({info["f_ref_hz"]:.1f} Hz)',
@@ -277,6 +300,8 @@ def evaluate_note(df, info, cfg=CFG):
         "durasi_stabil_s": round(len(s) * cfg.CREPE_STEP_MS / 1000, 2),
     }
 
+# --- 3. Deteksi wajah dan pengambilan frame ---
+# Bounding box disimpan per frame sebagai acuan posisi crop untuk model bibir.
 def detect_face(model, frame, cfg=None):
     """
     Deteksi wajah pada satu frame BGR.
@@ -295,6 +320,8 @@ def detect_face(model, frame, cfg=None):
     return {"x1": float(x1), "y1": float(y1), "x2": float(x2), "y2": float(y2),
             "conf": float(confs[i]), "n_faces": int(len(boxes))}
 
+# Fungsi bantu ini memotong bbox pada batas gambar. Alur tracking bibir di bawah
+# memakai square_crop dengan padding agar geometri crop mengikuti data training.
 def crop_face(frame, det, cfg=None):
     """
     Crop wajah berbentuk persegi dengan padding (FACE_MARGIN).
@@ -338,6 +365,8 @@ def get_frame(meta, idx):
     cap.release()
     return frame if ok else None
 
+# --- 4. Crop wajah, keypoint bibir, dan perhitungan MAR ---
+# Urutan titik mengikuti label training. LIP_ORDER didefinisikan di akhir modul.
 def square_crop(img, cx, cy, side, out):
     """
     SAMA PERSIS dengan fungsi di Tahap 4.3 (training): crop persegi, padding hitam
@@ -352,6 +381,7 @@ def square_crop(img, cx, cy, side, out):
         img = cv2.copyMakeBorder(img, pad_t, pad_b, pad_l, pad_r, cv2.BORDER_CONSTANT, value=0)
     crop = img[y0 + pad_t: y0 + pad_t + s, x0 + pad_l: x0 + pad_l + s]
     crop = cv2.resize(crop, (out, out), interpolation=cv2.INTER_AREA)
+    # Offset dan skala diperlukan untuk mengembalikan titik prediksi ke frame asli.
     return crop, x0, y0, out / s
 
 def smooth_face_track(df_face, cfg=None):
@@ -365,6 +395,8 @@ def smooth_face_track(df_face, cfg=None):
     d["cx"] = (df_face["x1"] + df_face["x2"]) / 2
     d["cy"] = (df_face["y1"] + df_face["y2"]) / 2
     d["side"] = np.maximum(df_face["x2"] - df_face["x1"], df_face["y2"] - df_face["y1"])
+    # Interpolasi bbox mengisi frame tanpa wajah dengan posisi perkiraan dari track.
+    # Rolling mean meredam getaran posisi sebelum crop dipakai untuk inferensi bibir.
     for c in ("cx", "cy", "side"):
         d[c] = (d[c].interpolate(limit_direction="both")
                     .rolling(cfg.BBOX_SMOOTH_FRAMES, center=True, min_periods=1).mean())
@@ -388,6 +420,9 @@ def predict_lips(model, crop, cfg=None):
             "n_mouth": int(len(r.boxes))}
 
 def mar_from_kp(kp):
+    # Empat titik harus memiliki koordinat lengkap untuk menghasilkan rasio valid.
+    # MAR = jarak bibir dalam atas-bawah / jarak kedua sudut bibir.
+    # Rasio ini tidak memiliki satuan dan tetap sama ketika crop diperbesar seragam.
     if kp.shape != (4, 2) or not np.isfinite(kp).all() or (kp == 0).all(axis=1).any():
         return np.nan
     v = np.linalg.norm(kp[2] - kp[3])   # bibir dalam atas - bawah
@@ -415,6 +450,8 @@ def run_lip_tracking(meta, df_face, model, cfg=None):
         rows.append(rec)
     elapsed = time.time() - t0
 
+    # Satu baris tetap disimpan untuk setiap frame, termasuk ketika deteksi gagal.
+    # lip_detected menunjukkan adanya prediksi, sedangkan MAR valid dicek lewat NaN.
     df = pd.DataFrame(rows)
     out_csv = os.path.join(os.path.dirname(meta["video_path"]), "mar.csv")
     df.to_csv(out_csv, index=False)
@@ -422,6 +459,10 @@ def run_lip_tracking(meta, df_face, model, cfg=None):
           f"({len(df) / max(elapsed, 1e-6):.1f} FPS) -> {out_csv}")
     return df
 
+# --- 5. Sinkronisasi bukaan mulut dengan sampel audio ---
+# CREPE memiliki grid 10 ms, sementara video 30 fps berjarak sekitar 33 ms.
+# MAR diinterpolasi ke grid audio, lalu dihaluskan dengan median 9 sampel (~90 ms).
+# Timestamp diasumsikan memiliki awal yang sama dari hasil prepare_input().
 def sync_pitch_mar(df_pitch, df_lip, fps, smooth_frames=9):
     t_audio = df_pitch["t"].to_numpy(dtype=float)
     t_video = df_lip["t"].to_numpy(dtype=float)
@@ -447,16 +488,17 @@ def sync_pitch_mar(df_pitch, df_lip, fps, smooth_frames=9):
     mar_interp = np.full(len(t_audio), np.nan)
     mar_smooth = np.full(len(t_audio), np.nan)
 
-    # Sebelum np.split: pisahkan rangkaian frame valid agar jeda deteksi tetap kosong.
+    # Pisahkan rangkaian frame valid agar jeda deteksi tetap kosong.
     for blok in np.split(idx, putus):
         if blok.size == 0:
             continue
 
         t_blok = t_video[blok]
         dalam_blok = (t_audio >= t_blok[0] - 1e-9) & (t_audio <= t_blok[-1] + 1e-9)
+        # Interpolasi berlaku di antara timestamp pertama dan terakhir setiap blok.
         nilai = np.interp(t_audio[dalam_blok], t_blok, mar[blok])
 
-        # Sebelum np.interp: hitung MAR pada timestamp CREPE di dalam tiap blok video.
+        # Simpan versi interpolasi serta versi halus untuk inspeksi dan grafik.
         mar_interp[dalam_blok] = nilai
         mar_smooth[dalam_blok] = (
             pd.Series(nilai)
@@ -467,4 +509,5 @@ def sync_pitch_mar(df_pitch, df_lip, fps, smooth_frames=9):
 
     return df_pitch.assign(mar_interp=mar_interp, mar_smooth=mar_smooth)
 
+# Nama dan urutan kolom koordinat mengikuti empat keypoint pada dataset training.
 LIP_ORDER = ["sudut_kiri", "sudut_kanan", "dalam_atas", "dalam_bawah"]
