@@ -102,7 +102,7 @@ export function App() {
           </div>
           <h2 className="text-3xl sm:text-4xl lg:text-5xl font-extrabold tracking-tight text-white">
             Sinkronisasi Pitch Vokal &{' '}
-            <span className="bg-gradient-to-r from-indigo-400 via-violet-400 to-pink-400 bg-clip-text text-transparent">
+            <span className="bg-linear-to-r from-indigo-400 via-violet-400 to-pink-400 bg-clip-text text-transparent">
               Artikulasi Bibir
             </span>
           </h2>

@@ -37,7 +37,7 @@ export const KeypointGallery: React.FC<KeypointGalleryProps> = ({ previews, marM
             <span className="text-slate-300">Sudut Kiri</span>
           </span>
           <span className="flex items-center space-x-1.5">
-            <span className="w-3 h-3 rounded-full bg-cyan-400 border border-white" />
+            <span className="w-3 h-3 rounded-full bg-red-400 border border-white" />
             <span className="text-slate-300">Sudut Kanan</span>
           </span>
           <span className="flex items-center space-x-1.5">

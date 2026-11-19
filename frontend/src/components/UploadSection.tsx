@@ -261,7 +261,7 @@ export const UploadSection: React.FC<UploadSectionProps> = ({
             className={`w-full py-4 rounded-2xl font-semibold text-sm transition shadow-lg flex items-center justify-center space-x-2 ${
               (!selectedFile && !useSample) || isAnalyzing
                 ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700/40'
-                : 'bg-gradient-to-r from-indigo-600 via-violet-600 to-indigo-600 hover:from-indigo-500 hover:to-violet-500 text-white shadow-indigo-600/25 cursor-pointer hover:scale-[1.005]'
+                : 'bg-linear-to-r from-indigo-600 via-violet-600 to-indigo-600 hover:from-indigo-500 hover:to-violet-500 text-white shadow-indigo-600/25 cursor-pointer hover:scale-[1.005]'
             }`}
           >
             {isAnalyzing ? (
@@ -290,7 +290,7 @@ export const UploadSection: React.FC<UploadSectionProps> = ({
               </p>
               <div className="w-full bg-slate-800 h-1.5 rounded-full mt-3 overflow-hidden">
                 <div
-                  className="bg-gradient-to-r from-indigo-500 to-pink-500 h-full transition-all duration-500 rounded-full"
+                  className="bg-linear-to-r from-indigo-500 to-pink-500 h-full transition-all duration-500 rounded-full"
                   style={{ width: `${((currentStepIndex + 1) / ANALYSIS_STEPS.length) * 100}%` }}
                 />
               </div>

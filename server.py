@@ -10,8 +10,20 @@ import threading
 from pathlib import Path
 from dataclasses import replace
 
-# Pastikan FFmpeg ditemukan di Windows (termasuk folder Cubase jika ada)
+# Pastikan FFmpeg ditemukan di Windows (imageio-ffmpeg, sistem PATH, atau Cubase)
 import shutil
+if not shutil.which("ffmpeg"):
+    try:
+        import imageio_ffmpeg
+        ffmpeg_bin = imageio_ffmpeg.get_ffmpeg_exe()
+        ffmpeg_dir = os.path.dirname(ffmpeg_bin)
+        target_ffmpeg = os.path.join(ffmpeg_dir, "ffmpeg.exe")
+        if not os.path.exists(target_ffmpeg):
+            shutil.copy2(ffmpeg_bin, target_ffmpeg)
+        os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ.get("PATH", "")
+    except Exception:
+        pass
+
 if not shutil.which("ffmpeg"):
     cubase_ffmpeg = r"C:\Program Files\Steinberg\Cubase 13\Externals\FFmpeg\5.1.1"
     if os.path.exists(os.path.join(cubase_ffmpeg, "ffmpeg.exe")):
