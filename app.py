@@ -9,16 +9,23 @@ os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MPLBACKEND"] = "Agg"
 
 from dataclasses import replace
+import base64
 import hashlib
+import html
 import io
 from pathlib import Path
-import resource
 import tempfile
 import threading
 import time
 import zipfile
 
+try:
+    import resource
+except ImportError:
+    resource = None
+
 import streamlit as st
+import streamlit.components.v1 as components
 
 st.set_page_config(page_title="VocalAlign — Uji Video", page_icon="🎵", layout="wide")
 st.title("VocalAlign")
@@ -123,7 +130,10 @@ def analyze_video(upload, note, progress):
             "Sampel sinkron dengan MAR": int(synced["mar_smooth"].notna().sum()),
             "MAR median": round(float(valid_lips["mar"].median()), 3) if not valid_lips.empty else None,
             "Waktu total termasuk muat model dan antrean (s)": round(time.perf_counter() - started, 2),
-            "Puncak RAM proses aplikasi sejak startup (MiB)": round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024, 1),
+            "Puncak RAM proses aplikasi sejak startup (MiB)": (
+                round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024, 1)
+                if resource is not None else "Tidak tersedia di Windows"
+            ),
             "TensorFlow": tf.__version__,
         }
         return {"summary": summary, "verdict": verdict, "synced": synced,
@@ -169,11 +179,35 @@ if "video_result" in st.session_state:
     st.line_chart(chart[["mar_interp", "mar_smooth"]])
 
     if result["previews"]:
+        from PIL import Image
+
         columns = st.columns(len(result["previews"]))
         for column, (image, caption) in zip(columns, result["previews"]):
-            column.image(image, caption=caption, use_container_width=True)
+            # Sertakan gambar di halaman agar tidak memerlukan URL /media terpisah.
+            image_buffer = io.BytesIO()
+            Image.fromarray(image).save(image_buffer, format="PNG")
+            image_base64 = base64.b64encode(image_buffer.getvalue()).decode("ascii")
+            safe_caption = html.escape(caption)
+            column.markdown(
+                f'<figure style="margin:0">'
+                f'<img src="data:image/png;base64,{image_base64}" '
+                f'alt="{safe_caption}" style="width:100%;height:auto;border-radius:8px">'
+                f'<figcaption style="text-align:center;margin-top:8px">'
+                f'{safe_caption}</figcaption></figure>',
+                unsafe_allow_html=True,
+            )
     else:
         st.warning("Belum ada titik bibir dengan MAR valid untuk ditampilkan.")
 
-    st.download_button("Download hasil CSV", data=result["archive"],
-                       file_name="vocalign_hasil_uji.zip", mime="application/zip")
+    # Browser menerima arsip langsung, termasuk keempat CSV hasil pengukuran.
+    archive_base64 = base64.b64encode(result["archive"]).decode("ascii")
+    components.html(
+        f'''<a href="data:application/zip;base64,{archive_base64}"
+            download="vocalign_hasil_uji.zip"
+            style="display:inline-block;padding:10px 16px;border:1px solid #777;
+                   border-radius:8px;text-decoration:none;font:14px sans-serif;
+                   color:white;background:#262730">
+            Download hasil CSV (.zip)
+        </a>''',
+        height=65,
+    )
