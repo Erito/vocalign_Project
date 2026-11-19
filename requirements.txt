@@ -3,4 +3,8 @@
 streamlit
 torch==2.8.0+cpu
 torchvision==0.23.0+cpu
-ultralytics>=8.3,<9
+ultralytics==8.4.215
+numpy==1.26.4
+opencv-python==4.11.0.86
+tensorflow-cpu==2.15.1
+crepe==0.0.16

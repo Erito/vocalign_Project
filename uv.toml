@@ -1,0 +1,1 @@
+build-constraint-dependencies = ["setuptools<81"]

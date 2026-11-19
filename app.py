@@ -54,3 +54,79 @@ if st.button("Uji model bibir"):
     except Exception as error:
         st.error("Uji model belum berhasil.")
         st.exception(error)
+
+
+
+# Uji CREPE menggunakan nada sintetis A4 pada CPU
+st.divider()
+st.subheader("Uji pitch CREPE")
+
+if st.button("Uji CREPE — A4 440 Hz"):
+    try:
+        with st.spinner("Memuat CREPE dan menganalisis nada uji..."):
+            import os
+            import time
+
+            os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+            os.environ["TF_NUM_INTRAOP_THREADS"] = "1"
+            os.environ["TF_NUM_INTEROP_THREADS"] = "1"
+
+            import numpy as np
+            import tensorflow as tf
+            import crepe
+
+            sr = 16000
+            frekuensi_target = 440.0
+
+            # Satu detik nada dengan frekuensi yang diketahui.
+            t = np.arange(sr) / sr
+            audio = (
+                0.3 * np.sin(2 * np.pi * frekuensi_target * t)
+            ).astype(np.float32)
+
+            mulai = time.perf_counter()
+
+            waktu, frekuensi, confidence, _ = crepe.predict(
+                audio,
+                sr,
+                model_capacity="small",
+                step_size=10,
+                viterbi=True,
+                verbose=0,
+            )
+
+            durasi_proses = time.perf_counter() - mulai
+
+            # Ukur bagian tengah untuk menghindari tepi sinyal.
+            valid = (
+                (waktu >= 0.2)
+                & (waktu <= 0.8)
+                & (confidence >= 0.6)
+                & np.isfinite(frekuensi)
+                & (frekuensi > 0)
+            )
+
+            if not valid.any():
+                raise ValueError(
+                    "CREPE belum menghasilkan pitch valid pada nada uji."
+                )
+
+            pitch_median = float(np.median(frekuensi[valid]))
+            selisih_cent = float(
+                1200 * np.log2(pitch_median / frekuensi_target)
+            )
+
+        st.write(f"Target: {frekuensi_target:.2f} Hz")
+        st.write(f"Pitch terukur: {pitch_median:.2f} Hz")
+        st.write(f"Selisih: {selisih_cent:+.2f} cent")
+        st.write(f"Waktu proses: {durasi_proses:.2f} detik")
+        st.write(f"TensorFlow: {tf.__version__}")
+
+        if abs(selisih_cent) <= 25:
+            st.success("Uji CREPE lulus.")
+        else:
+            st.warning("CREPE berjalan, tetapi selisih melewati 25 cent.")
+
+    except Exception as error:
+        st.error("Uji CREPE belum berhasil.")
+        st.exception(error)
